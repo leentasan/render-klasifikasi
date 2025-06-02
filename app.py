@@ -43,7 +43,7 @@ def classify_image():
         if contours:
             largest = max(contours, key=cv2.contourArea)
             x, y, w, h = cv2.boundingRect(largest)
-            ratio = round(w / h, 2)
+            ratio = round(h / w, 2)
             print(f"Bounding box rasio: {ratio}")
 
             if 0.6 <= ratio < 1.0:
