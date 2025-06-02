@@ -1,5 +1,4 @@
-flask
-numpy
-opencv-python
-scikit-learn
-paho-mqtt
+Flask==2.3.3
+numpy==1.24.3
+opencv-python-headless==4.8.1.78
+scikit-learn==1.3.0

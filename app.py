@@ -4,12 +4,8 @@ import numpy as np
 import cv2
 import time
 from sklearn.cluster import KMeans
-import paho.mqtt.publish as publish
 
 app = Flask(__name__)
-
-MQTT_BROKER = "broker.hivemq.com"
-MQTT_TOPIC = "overtaking/classification"
 
 @app.route("/classify", methods=["POST"])
 def classify_image():
@@ -59,22 +55,24 @@ def classify_image():
 
         classification_time = round(time.time() - start_time, 2)
 
-        # Kirim ke MQTT
-        message = {
-            "vehicle_type": vehicle_type,
-            "classification_time": classification_time
-        }
-        publish.single(MQTT_TOPIC, payload=str(message), hostname=MQTT_BROKER)
-
+        # Return hasil langsung via HTTP Response
         return jsonify({
             "vehicle_type": vehicle_type,
-            "classification_time": classification_time
-        })
+            "classification_time": classification_time,
+            "status": "success"
+        }), 200
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Error: {str(e)}")
+        return jsonify({
+            "error": str(e),
+            "status": "failed"
+        }), 500
 
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "healthy", "message": "Classification API is running"}), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=False)
