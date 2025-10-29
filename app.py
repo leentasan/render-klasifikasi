@@ -5,8 +5,8 @@ import cv2
 import time
 from supabase import create_client
 import uuid
-
 from dotenv import load_dotenv
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -29,7 +29,20 @@ def process_image(image_bytes):
         if img is None:
             raise ValueError("Gambar tidak valid atau tidak terbaca.")
         
+        # ============================
+        # Resize jika terlalu besar
+        # ============================
         h, w = img.shape[:2]
+        max_width = 800  # Resize ke max 800px width
+        if w > max_width:
+            ratio = max_width / w
+            new_w = max_width
+            new_h = int(h * ratio)
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            print(f"Image resized from {w}x{h} to {new_w}x{new_h}")
+        # ============================
+        
+        h, w = img.shape[:2]  # Update h, w setelah resize
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
         # ============================
