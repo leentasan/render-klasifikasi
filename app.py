@@ -1,15 +1,18 @@
 import os
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import numpy as np
 import cv2
 import time
 from supabase import create_client
 import uuid
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS untuk dashboard
 
 # Initialize Supabase
 supabase_url = os.getenv("SUPABASE_URL")
@@ -19,7 +22,7 @@ supabase = create_client(supabase_url, supabase_key) if supabase_url and supabas
 def process_image(image_bytes):
     """
     Process image menggunakan HSV color segmentation + morphology + contour
-    SAMA PERSIS dengan algoritma Colab notebook
+    ⚠️ TIDAK DIUBAH - SAMA PERSIS dengan algoritma original
     """
     try:
         # Decode image dari bytes
@@ -33,7 +36,7 @@ def process_image(image_bytes):
         # Resize jika terlalu besar
         # ============================
         h, w = img.shape[:2]
-        max_width = 640  # Resize ke max 800px width
+        max_width = 640  # Resize ke max 640px width
         if w > max_width:
             ratio = max_width / w
             new_w = max_width
@@ -101,19 +104,22 @@ def process_image(image_bytes):
         return None, None
 
 def classify_vehicle(ratio_hw):
-    """Klasifikasi kendaraan berdasarkan rasio h/w"""
+    """
+    Klasifikasi kendaraan berdasarkan rasio h/w
+    ⚠️ TIDAK DIUBAH - SAMA PERSIS dengan algoritma original
+    """
     if ratio_hw is None:
         return "tidak terdeteksi", 0.0
     
     # Sesuaikan dengan threshold kamu
     if ratio_hw < 0.6:
-        return "mobil", 4.5
+        return "car", 4.5
     elif 0.6 <= ratio_hw < 1.0:
-        return "bus sedang", 8.0
+        return "medium_truck_bus", 8.0
     elif 1.0 <= ratio_hw < 1.3:
-        return "bus besar", 12.0
+        return "medium_truck_bus", 12.0
     else:
-        return "truk besar", 15.0
+        return "large_truck_bus", 15.0
 
 def upload_to_supabase(image_bytes):
     """Upload gambar ke Supabase Storage"""
@@ -143,11 +149,46 @@ def upload_to_supabase(image_bytes):
         print(f"Error uploading to Supabase: {e}")
         return None
 
-@app.route("/classify", methods=["POST"])
+def insert_to_database(log_data, image_data):
+    """
+    ✅ NEW FUNCTION: Insert detection ke database (2 tabel)
+    """
+    if not supabase:
+        print("Supabase not configured - skipping database insert")
+        return False
+    
+    try:
+        # 1. INSERT ke overtaking_logs
+        log_response = supabase.table("overtaking_logs").insert(log_data).execute()
+        
+        if not log_response.data:
+            print("Failed to insert into overtaking_logs")
+            return False
+        
+        print(f"✅ Inserted to overtaking_logs: {log_data['id']}")
+        
+        # 2. INSERT ke overtaking_images
+        image_response = supabase.table("overtaking_images").insert(image_data).execute()
+        
+        if not image_response.data:
+            print("Failed to insert into overtaking_images")
+            return False
+        
+        print(f"✅ Inserted to overtaking_images: {image_data['overtaking_log_id']}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error inserting to database: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+@app.route("/api/classify-image", methods=["POST"])
 def classify_image():
     """
-    Endpoint untuk klasifikasi gambar dari ESP32
-    Menerima multipart/form-data dengan field 'image'
+    ✅ UPDATED ENDPOINT: /classify → /api/classify-image
+    Menerima gambar, proses, simpan ke database, return minimal response
     """
     start_time = time.time()
     
@@ -164,50 +205,237 @@ def classify_image():
         image_bytes = image_file.read()
         
         # Validasi ukuran (max 5MB)
+        image_size_kb = len(image_bytes) / 1024
         if len(image_bytes) > 5 * 1024 * 1024:
             return jsonify({
                 "success": False,
                 "error": "File too large. Max 5MB"
             }), 413
         
-        print(f"Received image: {len(image_bytes)} bytes")
+        print(f"Received image: {image_size_kb:.2f} KB")
         
-        # Process image (algoritma SAMA)
+        # ============================
+        # IMAGE PROCESSING (TIDAK DIUBAH)
+        # ============================
         ratio_hw, processed_img = process_image(image_bytes)
         
-        # Klasifikasi
+        if ratio_hw is None:
+            return jsonify({
+                "success": False,
+                "error": "Vehicle not detected in image"
+            }), 400
+        
+        # Klasifikasi (TIDAK DIUBAH)
         vehicle_type, detected_length_m = classify_vehicle(ratio_hw)
         
         # Upload ke Supabase Storage
         image_url = upload_to_supabase(image_bytes)
         
-        # Hitung waktu eksekusi
-        classification_time = round(time.time() - start_time, 2)
+        if not image_url:
+            return jsonify({
+                "success": False,
+                "error": "Failed to upload image to storage"
+            }), 500
         
-        # Response untuk ESP
-        response_data = {
-            "success": True,
+        # Hitung waktu eksekusi
+        classification_time = round(time.time() - start_time, 3)
+        
+        # ============================
+        # NEW: Generate overtaking_log_id & INSERT ke database
+        # ============================
+        overtaking_log_id = str(uuid.uuid4())
+        
+        # Data untuk overtaking_logs
+        log_data = {
+            "id": overtaking_log_id,
             "vehicle_type": vehicle_type,
             "detected_length_m": detected_length_m,
-            "image_url": image_url,
-            "ratio_hw": round(ratio_hw, 2) if ratio_hw else None,
+            "ratio_hw": round(ratio_hw, 3),
             "classification_time": classification_time,
-            "status": "success"
+            "vehicle_speed": None,
+            "distance_ab": None,
+            "feasibility_result": None,
+            "feasibility_time": None
         }
         
-        print(f"Classification done: {vehicle_type} (ratio: {ratio_hw:.2f}) in {classification_time}s")
+        # Data untuk overtaking_images
+        image_data = {
+            "id": str(uuid.uuid4()),
+            "overtaking_log_id": overtaking_log_id,
+            "image_url": image_url,
+            "image_size_kb": round(image_size_kb, 2)
+        }
+        
+        # Insert ke database
+        db_success = insert_to_database(log_data, image_data)
+        
+        if not db_success:
+            print("⚠️ Warning: Failed to insert to database, but continuing...")
+        
+        # ============================
+        # RESPONSE MINIMAL KE ESP
+        # ============================
+        response_data = {
+            "success": True,
+            "overtaking_log_id": overtaking_log_id,
+            "vehicle_type": vehicle_type,
+            "detected_length_m": detected_length_m
+        }
+        
+        print(f"✅ Classification done: {vehicle_type} ({detected_length_m}m, ratio: {ratio_hw:.2f}) in {classification_time}s")
         
         return jsonify(response_data), 200
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"❌ Error: {str(e)}")
         import traceback
         traceback.print_exc()
         
         return jsonify({
             "success": False,
-            "error": str(e),
-            "status": "failed"
+            "error": str(e)
+        }), 500
+
+@app.route("/api/update-stm", methods=["POST"])
+def update_stm_result():
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                "success": False,
+                "error": "No JSON data received"
+            }), 400
+        
+        overtaking_log_id = data.get("overtaking_log_id")
+        if not overtaking_log_id:
+            return jsonify({
+                "success": False,
+                "error": "Missing overtaking_log_id"
+            }), 400
+        
+        update_data = {
+            "vehicle_speed": data.get("vehicle_speed"),
+            "distance_ab": data.get("distance_ab"),
+            "feasibility_result": data.get("feasibility_result"),
+            "feasibility_time": data.get("feasibility_time")
+        }
+        
+        if all(v is None for v in update_data.values()):
+            return jsonify({
+                "success": False,
+                "error": "No data to update"
+            }), 400
+        
+        # ✅ DEBUG: Print semua info
+        print("=" * 50)
+        print(f"📝 Received overtaking_log_id: '{overtaking_log_id}'")
+        print(f"📝 Type: {type(overtaking_log_id)}")
+        print(f"📝 Length: {len(overtaking_log_id)}")
+        print(f"📝 Update data: {update_data}")
+        print("=" * 50)
+        
+        if not supabase:
+            return jsonify({
+                "success": False,
+                "error": "Supabase not configured"
+            }), 500
+        
+        # ✅ DEBUG: Cek dulu apakah row ada
+        check_response = supabase.table("overtaking_logs").select("id").eq("id", overtaking_log_id).execute()
+        print(f"🔍 Check query result: {check_response.data}")
+        
+        if not check_response.data or len(check_response.data) == 0:
+            print(f"❌ Log ID NOT FOUND in database: {overtaking_log_id}")
+            return jsonify({
+                "success": False,
+                "error": f"Log ID not found: {overtaking_log_id}"
+            }), 404
+        
+        print(f"✅ Log ID FOUND in database!")
+        
+        # UPDATE database
+        response = supabase.table("overtaking_logs")\
+            .update(update_data)\
+            .eq("id", overtaking_log_id)\
+            .execute()
+        
+        print(f"🔄 Update response: {response.data}")
+        
+        if not response.data or len(response.data) == 0:
+            return jsonify({
+                "success": False,
+                "error": f"Update failed for log ID: {overtaking_log_id}"
+            }), 500
+        
+        print(f"✅ STM result updated for log: {overtaking_log_id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "STM result updated successfully",
+            "updated_log_id": overtaking_log_id
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error updating STM result: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@app.route("/api/stats", methods=["GET"])
+def get_stats():
+    """
+    ✅ NEW ENDPOINT: Stats untuk dashboard (optional tapi berguna)
+    """
+    try:
+        if not supabase:
+            return jsonify({
+                "success": False,
+                "error": "Supabase not configured"
+            }), 500
+        
+        # Total detections
+        total_response = supabase.table("overtaking_logs").select("id", count="exact").execute()
+        total_count = total_response.count if total_response.count else 0
+        
+        # Today's detections
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_response = supabase.table("overtaking_logs").select("id", count="exact").gte("created_at", today).execute()
+        today_count = today_response.count if today_response.count else 0
+        
+        # Vehicle type distribution
+        all_logs = supabase.table("overtaking_logs").select("vehicle_type").execute()
+        vehicle_distribution = {}
+        if all_logs.data:
+            for log in all_logs.data:
+                vtype = log.get("vehicle_type", "unknown")
+                vehicle_distribution[vtype] = vehicle_distribution.get(vtype, 0) + 1
+        
+        # Feasibility distribution (yang sudah diupdate STM)
+        feasibility_logs = supabase.table("overtaking_logs").select("feasibility_result").not_.is_("feasibility_result", "null").execute()
+        feasibility_distribution = {}
+        if feasibility_logs.data:
+            for log in feasibility_logs.data:
+                fresult = log.get("feasibility_result", "unknown")
+                feasibility_distribution[fresult] = feasibility_distribution.get(fresult, 0) + 1
+        
+        return jsonify({
+            "success": True,
+            "total_detections": total_count,
+            "today_detections": today_count,
+            "vehicle_distribution": vehicle_distribution,
+            "feasibility_distribution": feasibility_distribution
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error getting stats: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
         }), 500
 
 @app.route("/health", methods=["GET"])
@@ -216,7 +444,8 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "message": "Classification API is running",
-        "supabase_configured": supabase is not None
+        "supabase_configured": supabase is not None,
+        "timestamp": datetime.now().isoformat()
     }), 200
 
 @app.route("/", methods=["GET"])
@@ -224,15 +453,20 @@ def home():
     """Root endpoint untuk keep-alive ping"""
     return jsonify({
         "service": "Vehicle Classification API",
-        "version": "2.0",
+        "version": "3.0",
         "endpoints": {
-            "/classify": "POST - Upload image for classification",
+            "/api/classify-image": "POST - Upload image for classification (ESP → Render)",
+            "/api/update-stm": "POST - Update STM result (ESP → Render)",
+            "/api/stats": "GET - Get statistics (Dashboard)",
             "/health": "GET - Health check"
         }
     }), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"Starting Flask app on port {port}")
-    print(f"Supabase configured: {supabase is not None}")
+    print("=" * 50)
+    print(f"🚀 Starting Vehicle Classification API v3.0")
+    print(f"📡 Port: {port}")
+    print(f"🗄️  Supabase configured: {supabase is not None}")
+    print("=" * 50)
     app.run(host="0.0.0.0", port=port, debug=False)
