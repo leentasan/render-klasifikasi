@@ -33,7 +33,7 @@ def process_image(image_bytes):
         # Resize jika terlalu besar
         # ============================
         h, w = img.shape[:2]
-        max_width = 800  # Resize ke max 800px width
+        max_width = 640  # Resize ke max 800px width
         if w > max_width:
             ratio = max_width / w
             new_w = max_width
