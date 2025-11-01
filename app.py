@@ -111,15 +111,16 @@ def classify_vehicle(ratio_hw):
     if ratio_hw is None:
         return "tidak terdeteksi", 0.0
     
-    # Sesuaikan dengan threshold kamu
-    if ratio_hw < 0.6:
-        return "car", 4.5
-    elif 0.6 <= ratio_hw < 1.0:
-        return "medium_truck_bus", 8.0
+    # Sesuai tabel klasifikasi
+    if 0.6 <= ratio_hw < 1.0:
+        return "mobil", 5.5
     elif 1.0 <= ratio_hw < 1.3:
-        return "medium_truck_bus", 12.0
+        return "truk/bus sedang", 9.0
+    elif 1.3 <= ratio_hw <= 1.6:
+        return "truk/bus besar", 12.0
     else:
-        return "large_truck_bus", 15.0
+        # Di luar rentang (ratio < 0.6 atau > 1.6)
+        return "kendaraan tidak terdefinisi", 0.0
 
 def upload_to_supabase(image_bytes):
     """Upload gambar ke Supabase Storage"""
