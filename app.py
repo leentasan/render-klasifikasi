@@ -256,7 +256,8 @@ def classify_image():
             "vehicle_speed": None,
             "distance_ab": None,
             "feasibility_result": None,
-            "feasibility_time": None
+            "feasibility_time": None,
+            "total_process_time": None
         }
         
         # Data untuk overtaking_images
@@ -319,7 +320,8 @@ def update_stm_result():
             "vehicle_speed": data.get("vehicle_speed"),
             "distance_ab": data.get("distance_ab"),
             "feasibility_result": data.get("feasibility_result"),
-            "feasibility_time": data.get("feasibility_time")
+            "feasibility_time": data.get("feasibility_time"),
+            "total_process_time": data.get("total_process_time")
         }
         
         if all(v is None for v in update_data.values()):
