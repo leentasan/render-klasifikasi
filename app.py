@@ -113,11 +113,11 @@ def classify_vehicle(ratio_hw):
     
     # Sesuai tabel klasifikasi
     if 0.6 <= ratio_hw < 1.0:
-        return "mobil", 17
+        return "mobil", 12
     elif 1.0 <= ratio_hw < 1.2:
-        return "truk/bus sedang", 20
+        return "truk/bus sedang", 15
     elif 1.2 <= ratio_hw <= 1.5:
-        return "truk/bus besar", 34
+        return "truk/bus besar", 29
     else:
         # Di luar rentang (ratio < 0.6 atau > 1.5)
         return "kendaraan tidak terdefinisi", 0.0
